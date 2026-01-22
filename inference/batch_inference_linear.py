@@ -1,0 +1,362 @@
+import pandas as pd
+from tqdm import tqdm
+import time
+import os
+import argparse
+import json
+import pickle
+from collections import OrderedDict
+from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
+from utils.utils import set_seed
+import torch
+import copy
+parser = argparse.ArgumentParser()
+
+# Required parameters
+
+parser.add_argument("--dataset", 
+                    default="fashion", 
+                    choices=["yelp", "fashion", "beauty",],  # preprocess by myself
+                    help="Choose the dataset")
+parser.add_argument('--seed',
+                    type=int,
+                    default=42,
+                    help="random seed for different data split")
+parser.add_argument('--filter_user_id',
+                    type=int,
+                    default=5837,
+                    help="for testing prompt performance, filtered one user's records")
+parser.add_argument("--is_filter_user_id",
+                    default=False,
+                    help="is filter_user_id")
+parser.add_argument('--terminate',
+                    type=int,
+                    default=0,
+                    help="for filter batch_id")
+parser.add_argument('--span_len',
+                    type=int,
+                    default=3,
+                    help="stage size of sequence")
+parser.add_argument('--max_sub_batch_size',
+                    type=int,
+                    default=8,
+                    help="batch_size")
+parser.add_argument("--is_saved_emb",
+                    default=False,
+                    help="is saved emb")
+parser.add_argument("--is_saved_text",
+                    default=True,
+                    help="is saved LLM response")
+parser.add_argument('--gpu_id',
+                    type=int,
+                    default=1,
+                    help="gpu id")
+args = parser.parse_args()
+
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+
+set_seed(args.seed) # fix the random seed
+
+ENVIRONMENT_PROMPT_TEMPLATE = f"On the Amazon e-commerce platform, the user has interaction records exclusively from the one categories: {args.dataset}. The following is the historical interaction record of the user at the current stage.\n"
+USER_PREVIOUS_INTERESTS_TEMPLATE = "The user's previous interests and preferences were mainly in the following aspects: {} \n"
+ACTION_TEMPLATE = """(1) Determine whether the user's interests have changed. If there is no change, directly output the user's Final interests and stop.\n
+(2) If new interests are identified in the current stage, add them to the user's Final interests. If no new interests are found, skip this step.\n
+(3) Assess whether any interests need to be removed or require additional clarification."""
+OUTPUT_PROMPT_TEMPLATE = f"""Please follow the steps below to infer the user's preferences, personality and shopping habits.\n
+Step 1: Please infer the user's current preferences at this stage, focusing primarily on the types of items the user might like, which can be used for recommending similar items in the future. \n
+Step 2: Compare the user's previous interests with their current preferences and make a judgment:\n  {ACTION_TEMPLATE}
+Provide concise answers for each step, and finally output the user's Final interests within a limited length. The result must always conclude with: Final interests:\n
+- Interest 1\n
+- Interest 2  """
+OUTPUT_NO_INTEREST_PROMPT_TEMPLATE = """Please follow the steps below to infer the user's preferences, personality and shopping habits.\n
+Step 1: Please infer the user's current preferences at this stage, focusing primarily on the types of items the user might like, which can be used for recommending items in the future. \n 
+Step 2: When summarizing users' interests, consider the granularity based on interaction data. E.g., if multiple necklaces are involved, choose "necklace" (finer) or "jewelry" (broader) as per the situation.
+Step 3: User's interest points should be a well-described sentence rather than a single word or phrase.
+Provide concise explanation for each step, and rank the user's interests by importance, finally output the user's Final interests within a limited length. 
+Output format: 'Explanation:\n Final interests:\n 
+- Interest 1:\n
+- Interest 2:\n"""
+STAGE_ACTION_TEMPLATE = ["""Based on the interaction data at the current stage, if certain aspects of the previous user interests are either completely in conflict or not manifested at all in the current stage, please directly remove those parts from the previous user interests. Then output the Final interests. If there is nothing that needs to be deleted, output the previous user interests as they are. Note that you are only allowed to delete and not add or update anything new. The output format should be 'Explanation:[Here briefly explain the reason for removal or why nothing is removed]\n Final interests: [List out the remaining interests after the necessary removals]\n'""",
+                         """Based on the interaction data at the current stage, if certain aspects of the previous user interests need some fine-tuning or modification at this stage, please indicate how to make the modifications. And then output the modified Final interests. If there is no need for modification, output the previous interests as they are. Note that you are only allowed to make fine-tunings and not add or delete anything new. The output format should be 'Explanation:\n Final interests:\n'""",
+                         """If new user interests are discovered in the interaction data at the current stage when compared with the previous interests, please identify the new interests and output the Final interests. If there are no new interests, output the previous interests as they are. The output format should be 'Explanation:\n Final interests:\n'"""]
+ROUTER_TEMPLATE = """Please make a judgment based on the user's interests in the current stage as well as those in the previous stage, and identify the main interests of the user in the current stage. Then determine whether it is necessary to delete, modify, add to the interests in the current stage, or keep them unchanged. If deletion is needed, please output 1. If modification is required, please output 2. If addition is necessary, please output 3. If no change is needed, please output 4."""
+# Define function to create history message template
+def create_history_message(row, index):
+    if args.dataset == "beauty":
+        return f"{index}.Title: {row['item_title']}. Categories: {row['item_categories']}.\n"
+    elif args.dataset == "fashion":
+        message_parts = []
+        if row['item_title'] != "":
+            message_parts.append(f"{index}.Title: {row['item_title']}") 
+        else:
+            message_parts.append(f"{index}.Title: ")
+        # Add other non-empty features
+        features = []
+        if row['item_features'] != ' ':
+            features.append(f"features: {row['item_features']}")
+        if row['item_descriptions'] != ' ':
+            features.append(f"descriptions: {row['item_descriptions']}")
+        if row['item_details'] != ' ':
+            features.append(f"details: {row['item_details']}")
+        if row['item_brands'] != ' ':
+            features.append(f"brand: {row['item_brands']}")
+        if features:
+            message_parts.append(" with " + ". ".join(features))
+        return " ".join(message_parts) + "\n"
+    elif args.dataset == "yelp":
+        return f"clicked an item, with is named {row['item_title']} and is of brand {row['item_categories']}\n"
+
+
+def remove_last_two_interactions(group):
+    # Keep the first n-2 interactions for each user (remove the last two interaction records)
+    if len(group) <3:
+        return group
+    return group[:-2]
+
+
+def assign_stage_and_batch_dynamic(df, stage_size):
+    # TODO: Index is changed
+    """
+    Dynamically assign batch_id based on user's total number of stages. Each batch contains users with the same number of stages.
+    """
+    # Step 1: Add stage_id
+    df["stage_id"] = df.groupby("user_id").cumcount() // stage_size
+
+    # Step 2: Calculate total number of stages for each user
+    user_stage_counts = df.groupby("user_id")["stage_id"].max() + 1
+    user_stage_counts = user_stage_counts.reset_index().rename(
+        columns={"stage_id": "num_stages"}
+    )
+
+    # Step 3: Assign batch_id based on num_stages
+    user_stage_counts["batch_id"] = (
+        user_stage_counts["num_stages"].rank(method="dense").astype(int) - 1  # dense method assigns the same rank to equal values without skipping ranks, from smallest to largest. For example, if two users both have num_stages=3, they will both be assigned rank 1, and the next different value (e.g., 4) will be assigned rank 2.
+    )
+
+    # Step 4: Merge batch_id back to original DataFrame
+    original_index = df.index
+    df = df.merge(
+        user_stage_counts[["user_id", "batch_id"]], on="user_id", how="left"
+    )
+    df.index = original_index
+    return df
+
+
+def read_n_process_df(df_path, args):
+    df = pd.read_csv(df_path, sep="\t")
+    if args.is_filter_user_id:
+        df = df[df["user_id"] == args.filter_user_id]
+    
+    df_sorted = df.sort_values(by=['user_id', 'interaction_order'])
+    df_filtered = df_sorted.groupby('user_id', group_keys=False).apply(remove_last_two_interactions)
+    return df_filtered
+
+
+def extract_outputs_from_llm(tokenizer, init_seq_lens, generated_ids):
+    filtered_outputs = [text[init_seq_lens:] for text in generated_ids]
+    previous_translated_text = tokenizer.batch_decode(
+        filtered_outputs, skip_special_tokens=True
+    )
+    pure_previous_translated_text = []
+    for text in previous_translated_text:
+        rindex = text.rfind("Final interests")
+        if rindex == -1:  # Not found
+            rindex = 0
+        pure_previous_translated_text.append(text[rindex+16:])
+    return previous_translated_text, pure_previous_translated_text
+
+
+def main(df_path, save_path):
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "/home/lgr/LLM4MSR/Qwen", trust_remote_code=True
+    )
+    # tokenizer.pad_token = "[PAD]"
+    tokenizer.padding_side = "left"
+    model = (
+        AutoModelForCausalLM.from_pretrained(
+            "/home/lgr/LLM4MSR/Qwen", torch_dtype=torch.float16
+        )
+        .to(device)
+    )
+    model.eval()
+
+    # mode = "mean"
+    seq = None
+    start_time = time.time()
+
+    df_filtered = read_n_process_df(df_path, args)
+    df = assign_stage_and_batch_dynamic(df_filtered, args.span_len)
+
+    total_batches = len(df[df["batch_id"] >= args.terminate].groupby("batch_id"))
+    df_group = df.groupby("batch_id")
+    # Group by batch_id, users in each batch_group are different, but users in the same batch have the same stage_num
+    for batch_id, batch_group in tqdm(
+        df_group,
+        desc="Processing Batches",
+        total=total_batches,
+        leave=False,
+    ):
+        if batch_id < args.terminate:
+            continue
+        batch_group = batch_group.sort_values(by=["user_id", "interaction_order"])
+        user_ids = batch_group["user_id"].unique()
+        user_data = batch_group.groupby("user_id")  # Group stages for each user
+        max_stage = batch_group["stage_id"].max()  # Get maximum number of stages in current batch
+        temp_last_user_preference_dict = {}
+        temp_mean_user_preference_dict = {}
+        # Refined summary for users in current batch
+        previous_translated_text_dict = {
+            str(user_id): "" for user_id in user_ids
+        }  
+        # Final summary for users in current batch
+        user_interest_dict = dict.fromkeys(map(str, user_ids), {})
+
+        # Process stage by stage, from stage_id = 0,1,2,3,4,5,...,
+        for stage_index in tqdm(range(max_stage + 1), desc="Processing Stages in Batch", leave=False):
+            # Data for all users with stage_id = i in current batch
+            stage_data = batch_group[
+                batch_group["stage_id"] == stage_index
+            ] 
+            # Maximum number of users per inference, batch inference saves time
+            for start_idx in tqdm(range(0, len(user_ids), args.max_sub_batch_size),desc="Processing inner Batches",leave=False):  # Because number of users in each batch differs, some batches may have many users, processing all at once may cause memory overflow
+                sub_batch_user_ids = user_ids[
+                    start_idx : start_idx + args.max_sub_batch_size
+                ]
+                sub_batch_data = stage_data[
+                    stage_data["user_id"].isin(sub_batch_user_ids)
+                ]
+
+                # Generate Prompt based on sub_batch_data
+                prompts = []
+                behavior_lists = {}
+                span_user_ids = []
+                for user_id, user_data in sub_batch_data.groupby("user_id"):
+
+                    # Generate prompt for user history records
+                    user_history_series = [create_history_message(row, index+1) for index, (_,row) in enumerate(user_data.iterrows())]
+                    user_history_prompt = " ".join(user_history_series)
+                    # Generate prompt based on stage
+                    if stage_index == 0:
+                        final_prompt = (
+                            ENVIRONMENT_PROMPT_TEMPLATE
+                            + user_history_prompt
+                            + OUTPUT_NO_INTEREST_PROMPT_TEMPLATE
+                        )
+                    else:
+                        final_prompt = (
+                            ENVIRONMENT_PROMPT_TEMPLATE
+                            + user_history_prompt
+                        )
+                    message = [
+                        {
+                            "role": "system",
+                            "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.",
+                        },
+                        {"role": "user", "content": final_prompt}
+                    ]
+                    prompts.append(message)
+                    span_user_ids.append(str(user_id))
+                    behavior_lists[str(user_id)] = user_history_prompt
+                # LLM batch inference - Vector output
+                with torch.no_grad():
+                    if stage_index == 0:
+                        texts = tokenizer.apply_chat_template(
+                            prompts, tokenize=False, add_generation_prompt=True
+                        )
+                        seq = tokenizer(
+                            texts, return_tensors="pt", padding=True, truncation=True
+                        ).to(f"cuda:{args.gpu_id}")
+                        init_seq_lens = seq["input_ids"].shape[1]
+                        outputs = model.generate(
+                            **seq, max_new_tokens=1024, return_dict_in_generate=True, output_hidden_states=True
+                        )  # cache_implementation="static"
+                        previous_translated_text, pure_previous_translated_text = extract_outputs_from_llm(tokenizer, init_seq_lens, outputs.sequences)
+
+                        for i, user_id in enumerate(span_user_ids):
+                            if stage_index not in user_interest_dict[user_id]:
+                                user_interest_dict[user_id][stage_index] = {}
+                            user_interest_dict[user_id][stage_index]['behavior'] = behavior_lists[user_id]
+                            # user_interest_dict[user_id][stage_index]["q_"+"0"] = USER_PREVIOUS_INTERESTS_TEMPLATE.format(previous_translated_text_dict[user_id]) 
+                            user_interest_dict[user_id][stage_index]["r_"+"0"] = previous_translated_text[i]
+                        extracted_interest_dict = dict(zip(span_user_ids, pure_previous_translated_text))
+                        previous_translated_text_dict.update(extracted_interest_dict)
+                    else:
+                        # Sequential multi-stage inference
+                        # 3. Determine if previous stage interests need new preferences added -> after addition
+                        # 2. Determine if previous stage interests need modification for similar content -> after modification
+                        # 1. Determine if previous stage interests need deletion -> after deletion
+                        for num in range(3):
+                            temp_prompts = copy.deepcopy(prompts)
+                            for i, prompt in enumerate(temp_prompts):
+                                prompt[1]["content"] += USER_PREVIOUS_INTERESTS_TEMPLATE.format(previous_translated_text_dict[span_user_ids[i]])
+                                prompt[1]["content"] += STAGE_ACTION_TEMPLATE[num]
+                            texts = tokenizer.apply_chat_template(
+                                temp_prompts, tokenize=False, add_generation_prompt=True
+                            )
+                            seq = tokenizer(
+                                texts, return_tensors="pt", padding=True, truncation=True
+                            ).to(f"cuda:{args.gpu_id}")
+                            init_seq_lens = seq["input_ids"].shape[1]
+                            outputs = model.generate(
+                                **seq, max_new_tokens=1024, return_dict_in_generate=True, output_hidden_states=True
+                            )  # cache_implementation="static"
+   
+                            previous_translated_text, pure_previous_translated_text = extract_outputs_from_llm(tokenizer, init_seq_lens, outputs.sequences)
+                            for user_id in span_user_ids:
+                                if stage_index not in user_interest_dict[user_id]:
+                                    user_interest_dict[user_id][stage_index] = {}
+                                user_interest_dict[user_id][stage_index]['behavior'] = behavior_lists[user_id]
+                                user_interest_dict[user_id][stage_index]["q_"+str(num)] = USER_PREVIOUS_INTERESTS_TEMPLATE.format(previous_translated_text_dict[user_id]) 
+                                user_interest_dict[user_id][stage_index]["r_"+str(num)] = previous_translated_text[i]
+                            extracted_interest_dict = dict(zip(span_user_ids, pure_previous_translated_text))
+                            previous_translated_text_dict.update(extracted_interest_dict)
+                    generated_hidden_states = outputs.hidden_states  # len = 109 corresponds to length of generated tokens. Each element has len=29. Each element's shape is [16, 375, 3584], other elements' shape is [16, 1, 3584]
+                    last_hidden_layer = [hidden[-1][:, -1, :] for hidden in generated_hidden_states]
+                    mean_hidden_states = torch.stack(last_hidden_layer).mean(dim=0)
+                    mean_hidden_states = mean_hidden_states.detach().cpu().numpy()
+
+                    last_hidden_states = (
+                        generated_hidden_states[-1][-1][:, -1, :]
+                        .detach()
+                        .cpu()
+                        .numpy()  # vector_outputs.hidden_states[-1].shape = torch.Size([32, 390, 3584])
+                    )  # [max_sub_batch_size, 4096]
+                    
+                    del generated_hidden_states
+                    # Update user_preference_dict
+                    for key, last_vector, mean_vector in zip(span_user_ids, last_hidden_states, mean_hidden_states):
+                        vector_dict = {key: last_vector}
+                        mean_dict = {key: mean_vector}
+                        # user_preference_dict.update(vector_dict)
+                        temp_last_user_preference_dict.update(vector_dict)
+                        temp_mean_user_preference_dict.update(mean_dict)
+                torch.cuda.empty_cache()
+
+        if args.is_saved_text:
+            # with open(f"{save_path}/interest/{batch_id}.json", 'w', encoding='utf-8') as f:
+                # json.dump(user_interest_dict, f, ensure_ascii=False, indent=4)
+            pickle.dump(user_interest_dict, open(f"{save_path}/interest/{batch_id}.pkl", "wb"))
+
+        if args.is_saved_emb:
+            torch.save(
+                temp_last_user_preference_dict,
+                f"{save_path}/last/{batch_id}.pt",
+            )
+            torch.save(
+                temp_mean_user_preference_dict,
+                f"{save_path}/mean/{batch_id}.pt",
+            )
+
+    end_time = time.time()
+    print(f"Time taken: {end_time - start_time}")
+
+
+if __name__ == "__main__":
+    # Use relative path, relative to project root directory
+    df_path = f"./prompt/data/{args.dataset}/{args.dataset}.csv"
+    save_path = f"./prompt/data/{args.dataset}"
+    main(df_path=df_path, save_path=save_path)
