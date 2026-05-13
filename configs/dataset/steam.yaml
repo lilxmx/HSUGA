@@ -1,0 +1,5 @@
+# Steam dataset configuration
+dataset:
+  name: steam
+  ts_user: 16
+  ts_item: 69

@@ -1,0 +1,37 @@
+nohup: ignoring input
+================================================================
+ HSUGA Full Reproduction
+ Working dir: /apdcephfs_nj7_303360414/share_303360414/ricardogrli/rec/HSUGA_private
+ Start time:  2026-05-13 12:30:45
+================================================================
+
+CondaError: Run 'conda init' before 'conda activate'
+
+ Python: /opt/conda/envs/hsuga/bin/python
+ Env:    hsuga
+================================================================
+
+================================================================
+ All 8 GPU slots launched (9 runs total, seed=44).
+
+ GPU 0-6: each runs 1 experiment
+ GPU 7:   runs 2 experiments sequentially
+
+ Monitor progress:
+   ls -lt runs/ | head -20
+   tail -f runs/<run_id>/stdout.log
+
+ Waiting for all jobs to complete...
+================================================================
+[LAUNCH] GPU=1  seed=44  run_id=hsuga_llmesr_sasrec_beauty_s44_20260513_123045
+[LAUNCH] GPU=2  seed=44  run_id=hsuga_llmesr_bert4rec_beauty_s44_20260513_123045
+[LAUNCH] GPU=0  seed=44  run_id=hsuga_llmesr_gru4rec_beauty_s44_20260513_123045
+[LAUNCH] GPU=3  seed=44  run_id=hsuga_llmesr_gru4rec_steam_s44_20260513_123045
+[LAUNCH] GPU=4  seed=44  run_id=hsuga_llmesr_sasrec_steam_s44_20260513_123045
+[LAUNCH] GPU=5  seed=44  run_id=hsuga_llmesr_bert4rec_steam_s44_20260513_123045
+[LAUNCH] GPU=6  seed=44  run_id=hsuga_llmesr_gru4rec_fashion_s44_20260513_123045
+[LAUNCH] GPU=7  seed=44  run_id=hsuga_llmesr_sasrec_fashion_s44_20260513_123045
+[DONE]   GPU=7  seed=44  run_id=hsuga_llmesr_sasrec_fashion_s44_20260513_123045  exit=0
+[LAUNCH] GPU=7  seed=44  run_id=hsuga_llmesr_bert4rec_fashion_s44_20260513_125154
+[DONE]   GPU=6  seed=44  run_id=hsuga_llmesr_gru4rec_fashion_s44_20260513_123045  exit=0
+[DONE]   GPU=4  seed=44  run_id=hsuga_llmesr_sasrec_steam_s44_20260513_123045  exit=0

@@ -1,0 +1,9 @@
+# HSUGA with GRU4Rec backbone
+model:
+  name: hsuga_gru4rec
+  hidden_size: 64
+  num_layers: 1
+  dropout_rate: 0.5
+  max_len: 200
+  freeze_llm_emb: true
+  use_cross_att: true

@@ -10,6 +10,40 @@ import pickle
 import pandas as pd
 
 
+def get_sim_user_file_path(args):
+    """
+    获取相似用户文件路径
+    
+    Args:
+        args: 包含 sim_user_file_path, dataset, hidden_mode 等参数
+    
+    Returns:
+        相似用户文件路径
+    """
+    if hasattr(args, 'sim_user_file_path') and args.sim_user_file_path is not None:
+        return args.sim_user_file_path
+    else:
+        return os.path.join("./data", args.dataset, "handled", f"sim_user_100{args.hidden_mode}.pkl")
+
+
+def get_sim_user_score_file_path(args):
+    """
+    获取相似用户分数文件路径
+    
+    Args:
+        args: 包含 sim_user_score_file_path, dataset, filter_similar_metric, hidden_mode 等参数
+    
+    Returns:
+        相似用户分数文件路径，如果不需要则返回 None
+    """
+    if hasattr(args, 'sim_user_score_file_path') and args.sim_user_score_file_path is not None:
+        return args.sim_user_score_file_path
+    elif hasattr(args, 'filter_similar_metric'):
+        return os.path.join("./data", args.dataset, "handled", f"sim_user_{args.filter_similar_metric}_score_100{args.hidden_mode}.pkl")
+    else:
+        return None
+
+
 def load_dynamic_k_from_analysis(args):
     """
     Load user signals from analysis file, compute dynamic K online based on w1, w2
@@ -150,7 +184,8 @@ class SeqDatasetAllUser(SeqDataset):
         self.sim_user_num = args.sim_user_num # 10
         self.sim_long_user_num = args.sim_long_user_num
         self.max_sim_user_num = max(self.sim_user_num, self.sim_long_user_num)
-        self.sim_users = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_100{args.hidden_mode}.pkl"), "rb"))
+        sim_user_path = get_sim_user_file_path(args)
+        self.sim_users = pickle.load(open(sim_user_path, "rb"))
         self.filter_similar_users = args.filter_similar_user
         # if args.weight_sum:
         self.similar_gate = args.similar_gate
@@ -159,7 +194,11 @@ class SeqDatasetAllUser(SeqDataset):
         self.sim_filter_percentile = getattr(args, 'sim_filter_percentile', 0.0)
         # If percentile filtering or global threshold filtering is enabled, need to load similarity scores
         if args.filter_similar_user or self.sim_filter_percentile > 0:
-            self.sim_users_scores = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_{args.filter_similar_metric}_score_100{args.hidden_mode}.pkl"), "rb"))
+            sim_score_path = get_sim_user_score_file_path(args)
+            if sim_score_path and os.path.exists(sim_score_path):
+                self.sim_users_scores = pickle.load(open(sim_score_path, "rb"))
+            else:
+                self.sim_users_scores = None
         else:
             self.sim_users_scores = None
         self.var_name = ["seq", "pos", "neg", "positions", "user_id", "sim_seq", "sim_positions", "valid_mask", "sim_user_ids"]  # "sim_user_scores"
@@ -409,13 +448,18 @@ class Seq2SeqDatasetAllUser(Seq2SeqDataset):
         self.sim_long_user_num = args.sim_long_user_num
         self.max_sim_user_num = max(self.sim_user_num, self.sim_long_user_num)
         # Use relative path, relative to project root directory
-        self.sim_users = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_100{args.hidden_mode}.pkl"), "rb"))
+        sim_user_path = get_sim_user_file_path(args)
+        self.sim_users = pickle.load(open(sim_user_path, "rb"))
         self.similar_gate = args.similar_gate
         # New: Relative percentile filtering parameter (per-user adaptive filtering)
         self.sim_filter_percentile = getattr(args, 'sim_filter_percentile', 0.0)
         # If percentile filtering or global threshold filtering is enabled, need to load similarity scores
         if args.filter_similar_user or self.sim_filter_percentile > 0:
-            self.sim_users_scores = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_{args.filter_similar_metric}_score_100{args.hidden_mode}.pkl"), "rb"))
+            sim_score_path = get_sim_user_score_file_path(args)
+            if sim_score_path and os.path.exists(sim_score_path):
+                self.sim_users_scores = pickle.load(open(sim_score_path, "rb"))
+            else:
+                self.sim_users_scores = None
         else:
             self.sim_users_scores = None
         self.filter_similar_users = args.filter_similar_user    
@@ -611,14 +655,19 @@ class BertRecTrainDatasetAllUser(Dataset):
         self.max_sim_user_num = max(self.sim_user_num, self.sim_long_user_num)
         self.mask_token = item_num + 1
         # Use relative path, relative to project root directory
-        self.sim_users = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_100{args.hidden_mode}.pkl"), "rb"))
+        sim_user_path = get_sim_user_file_path(args)
+        self.sim_users = pickle.load(open(sim_user_path, "rb"))
         self.similar_gate = args.similar_gate
         self.ts_user=args.ts_user
         # New: Relative percentile filtering parameter (per-user adaptive filtering)
         self.sim_filter_percentile = getattr(args, 'sim_filter_percentile', 0.0)
         # If percentile filtering or global threshold filtering is enabled, need to load similarity scores
         if args.filter_similar_user or self.sim_filter_percentile > 0:
-            self.sim_users_scores = pickle.load(open(os.path.join("./data/"+args.dataset+"/handled/", f"sim_user_{args.filter_similar_metric}_score_100{args.hidden_mode}.pkl"), "rb"))
+            sim_score_path = get_sim_user_score_file_path(args)
+            if sim_score_path and os.path.exists(sim_score_path):
+                self.sim_users_scores = pickle.load(open(sim_score_path, "rb"))
+            else:
+                self.sim_users_scores = None
         else:
             self.sim_users_scores = None
         self.filter_similar_users = args.filter_similar_user

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+
+# Data files (large binaries, download from cloud)
+data/*/handled/*.pkl
+data/*/handled/*.npy
+data/*/raw/
+
+# Training outputs
+runs/
+log/
+saved/
+nohup.out
+
+# Internal docs (not for public release)
+paper_explantation.md
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/

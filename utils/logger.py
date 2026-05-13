@@ -18,50 +18,50 @@ class Logger(object):
     def _create_logger(self):
         '''
         Initialize the logging module. Concretely, initialize the
-        tensorboard and logging
+        tensorboard and logging.
+        If args.run_dir is set, all outputs go to that directory.
         '''
-        # If demo, use default log
         if self.args.demo:
             self.args.log = False
-        
-        # Check whether the folder exists
-        main_path = r'./log/' + str(self.args.dataset) + '/' + str(self.args.model_name) + '/'
-        os.makedirs(main_path, exist_ok=True)  # exist_ok=True avoids race conditions during concurrent creation
 
-        # get the current time string
         now_str = time.strftime("%m%d%H%M%S", time.localtime())
 
-        # Initialize tensorboard. Set the save folder.
-        # default = True
-        if self.args.log:
-            os.makedirs(main_path + now_str + '/', exist_ok=True)
-            folder_name = main_path + now_str + '/tensorboard/'
-            file_path = now_str + '/bs' + str(self.args.train_batch_size) + '_lr' + str(self.args.lr) + '.txt'
+        # Use unified run_dir if available (new run management system)
+        if hasattr(self.args, 'run_dir') and self.args.run_dir:
+            run_dir = self.args.run_dir
+            os.makedirs(run_dir, exist_ok=True)
+            folder_name = os.path.join(run_dir, "tensorboard")
+            os.makedirs(folder_name, exist_ok=True)
+            log_path = os.path.join(run_dir, "train.log")
         else:
-            folder_name = main_path + '/default/'
-            file_path = 'default/log.txt'
+            # Fallback to legacy behavior
+            main_path = r'./log/' + str(self.args.dataset) + '/' + str(self.args.model_name) + '/'
+            os.makedirs(main_path, exist_ok=True)
+            if self.args.log:
+                os.makedirs(main_path + now_str + '/', exist_ok=True)
+                folder_name = main_path + now_str + '/tensorboard/'
+                file_path = now_str + '/bs' + str(self.args.train_batch_size) + '_lr' + str(self.args.lr) + '.txt'
+            else:
+                folder_name = main_path + '/default/'
+                file_path = 'default/log.txt'
+            log_path = main_path + file_path
+
         self.writer = SummaryWriter(folder_name)
 
-        # Initialize logging. Create console and file handler
-        self.logger = logging.getLogger(self.args.model_name)
-        self.logger.setLevel(logging.DEBUG)  # must set
-        
-        # create file handler
-        log_path = main_path +  file_path
+        self.logger = logging.getLogger(self.args.model_name + '_' + now_str)
+        self.logger.setLevel(logging.DEBUG)
+
         self.fh = logging.FileHandler(log_path, mode='w', encoding='utf-8')
         self.fh.setLevel(logging.DEBUG)
         fm = logging.Formatter("%(asctime)s-%(message)s")
         self.fh.setFormatter(fm)
         self.logger.addHandler(self.fh)
 
-        # record the hyper parameters in the text
         self.logger.info('The parameters are as below:')
         for kv in self.args._get_kwargs():
             self.logger.info('%s: %s' % (kv[0], str(kv[1])))
-        #self.logger.info('\nStart Training:')
-            
-        # Create console handler
-        self.ch = logging.StreamHandler()  # Stream handler's main function is to output log information to stream (usually console)
+
+        self.ch = logging.StreamHandler()
         self.ch.setLevel(logging.DEBUG)
         self.logger.addHandler(self.ch)
 

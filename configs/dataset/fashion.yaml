@@ -1,0 +1,5 @@
+# Amazon Fashion dataset configuration
+dataset:
+  name: fashion
+  ts_user: 3
+  ts_item: 4

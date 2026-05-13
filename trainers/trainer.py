@@ -60,8 +60,15 @@ class Trainer(object):
     
     def _create_model(self):
         '''create your model'''
+        # HSUGA core models (new config-driven names)
+        if self.args.model_name in ["hsuga_sasrec"]:
+            self.model = LLMESR_SASRec(self.user_num, self.item_num, self.device, self.args)
+        elif self.args.model_name in ["hsuga_gru4rec"]:
+            self.model = LLMESR_GRU4Rec(self.user_num, self.item_num, self.device, self.args)
+        elif self.args.model_name in ["hsuga_bert4rec"]:
+            self.model = LLMESR_Bert4Rec(self.user_num, self.item_num, self.device, self.args)
         # New: lightweight LLM2Rec integration models
-        if self.args.model_name in ["sasrec_llm2rec", "sasrec_with_alignment"]:
+        elif self.args.model_name in ["sasrec_llm2rec", "sasrec_with_alignment"]:
             if self.args.model_name == "sasrec_llm2rec":
                 self.model = SASRec_LLM2Rec(self.user_num, self.item_num, self.device, self.args)
             elif self.args.model_name == "sasrec_with_alignment":
@@ -76,19 +83,19 @@ class Trainer(object):
                 self.model = GRU4Rec_LLM2Rec(self.user_num, self.item_num, self.device, self.args)
             elif self.args.model_name == "gru4rec_with_alignment":
                 self.model = GRU4Rec_WithAlignment(self.user_num, self.item_num, self.device, self.args)
-        # Original models
-        elif self.args.model_name in ["llmesr_mean_sasrec", "llmesr_sasrec", "sasrec"]:
-            if self.args.model_name in ["llmesr_mean_sasrec", "llmesr_sasrec"]:
+        # HSUGA / LLMESR models
+        elif self.args.model_name in ["hsuga_llmesr_sasrec", "llmesr_mean_sasrec", "llmesr_sasrec", "sasrec"]:
+            if self.args.model_name in ["hsuga_llmesr_sasrec", "llmesr_mean_sasrec", "llmesr_sasrec"]:
                 self.model = LLMESR_SASRec(self.user_num, self.item_num, self.device, self.args)
             elif self.args.model_name == "sasrec":
                 self.model = SASRec_seq(self.user_num, self.item_num, self.device, self.args)
-        elif self.args.model_name in ["llmesr_mean_gru4rec", "llmesr_gru4rec", "gru4rec"]:
-            if self.args.model_name in ["llmesr_mean_gru4rec", "llmesr_gru4rec"]:
+        elif self.args.model_name in ["hsuga_llmesr_gru4rec", "llmesr_mean_gru4rec", "llmesr_gru4rec", "gru4rec"]:
+            if self.args.model_name in ["hsuga_llmesr_gru4rec", "llmesr_mean_gru4rec", "llmesr_gru4rec"]:
                 self.model = LLMESR_GRU4Rec(self.user_num, self.item_num, self.device, self.args)
             elif self.args.model_name == "gru4rec":
                 self.model = GRU4Rec(self.user_num, self.item_num, self.device, self.args)
-        elif self.args.model_name in ["llmesr_mean_bert4rec", "llmesr_bert4rec", "bert4rec"]:
-            if self.args.model_name in ["llmesr_mean_bert4rec", "llmesr_bert4rec"]:
+        elif self.args.model_name in ["hsuga_llmesr_bert4rec", "llmesr_mean_bert4rec", "llmesr_bert4rec", "bert4rec"]:
+            if self.args.model_name in ["hsuga_llmesr_bert4rec", "llmesr_mean_bert4rec", "llmesr_bert4rec"]:
                 self.model = LLMESR_Bert4Rec(self.user_num, self.item_num, self.device, self.args)
             elif self.args.model_name == "bert4rec":
                 self.model = Bert4Rec(self.user_num, self.item_num, self.device, self.args)

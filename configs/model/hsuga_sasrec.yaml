@@ -1,0 +1,10 @@
+# HSUGA with SASRec backbone
+model:
+  name: hsuga_sasrec
+  hidden_size: 64
+  trm_num: 2
+  num_heads: 1
+  dropout_rate: 0.5
+  max_len: 200
+  freeze_llm_emb: true
+  use_cross_att: true

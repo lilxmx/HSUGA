@@ -1,0 +1,5 @@
+# Amazon Beauty dataset configuration
+dataset:
+  name: beauty
+  ts_user: 9
+  ts_item: 4
