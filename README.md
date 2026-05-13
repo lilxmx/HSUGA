@@ -142,7 +142,7 @@ In conclusion, the prerequisite files to run the code are as follows:
 - `sim_user_100_qwen_mean_llm.pkl` — similar user set (cosine)
 - `sim_user_pearson_score_100_qwen_mean_llm.pkl` — similar user set (Pearson)
 
-To ease the reproducibility of our paper, we upload all preprocessed files here: **[Google Drive](TODO_DATA_LINK)** | **[Hugging Face](TODO_HF_LINK)**
+To ease the reproducibility of our paper, we upload all preprocessed files here: **[Google Drive](https://drive.google.com/file/d/1zfqISTT66F8zga6ybrDVdzjvu6-U8R5T/view?usp=sharing)**
 
 ## Run and test
 
